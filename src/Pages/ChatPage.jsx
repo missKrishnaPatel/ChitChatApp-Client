@@ -19,6 +19,8 @@ const ChatPage = () => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editedText, setEditedText] = useState("");
 
   const [groupName, setGroupName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
@@ -49,7 +51,7 @@ const ChatPage = () => {
       });
 
       const data = await response.json();
-      console.log("Users API:", data);
+      // console.log("Users API:", data);
 
       if (response.ok) {
         setUsers(
@@ -75,7 +77,7 @@ const ChatPage = () => {
       });
 
       const data = await response.json();
-      console.log("Groups API:", data);
+      // console.log("Groups API:", data);
 
       if (response.ok) {
         setGroups(data.message.groups || data.data?.message.groups || []);
@@ -96,11 +98,6 @@ const ChatPage = () => {
 
     loadData();
   }, [token, fetchUsers, fetchGroups]);
-
-
-  
-
-  
 
   // FETCH PRIVATE MESSAGES
   const fetchMessages = async (chatUserId) => {
@@ -128,41 +125,63 @@ const ChatPage = () => {
     }
   };
 
+  const fetchGroupMessages = async (groupId) => {
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/group-messages/${groupId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      const data = await response.json();
+      console.log("Group Messages API:", data);
+
+      if (response.ok) {
+        setMessages(data.message.messages || data.data?.message.messages || []);
+      } else {
+        setMessages([]);
+      }
+    } catch (error) {
+      console.error("Fetch Group Messages Error:", error);
+    }
+  };
+
   // SELECT USER
- const handleSelectUser = async (user) => {
-  setSelectedUser(user);
-  setSelectedGroup(null);
-  setMessages([]);
-  setNewMessage("");
+  const handleSelectUser = async (user) => {
+    setSelectedUser(user);
+    setSelectedGroup(null);
+    setMessages([]);
+    setNewMessage("");
 
-  const userPath = `${user.firstName}-${user.lastName}`
-    .toLowerCase()
-    .replace(/\s+/g, "-");
+    const userPath = `${user.firstName}-${user.lastName}`
+      .toLowerCase()
+      .replace(/\s+/g, "-");
 
-  navigate(`/dashboard/${userPath}`);
+    navigate(`/dashboard/${userPath}`);
 
-  await fetchMessages(user._id);
-};
+    await fetchMessages(user._id);
+  };
 
   // SELECT GROUP
-  const handleSelectGroup = async(group) => {
-  setSelectedGroup(group);
-  
-  setSelectedUser(null);
-  // setMessages([]);
-  setNewMessage("");
+  const handleSelectGroup = async (group) => {
+    setSelectedGroup(group);
 
-  const groupPath = group.groupName
-    .toLowerCase()
-    .replace(/\s+/g, "-");
+    setSelectedUser(null);
+    // setMessages([]);
+    setNewMessage("");
 
-  navigate(`/dashboard/group/${groupPath}`);
+    const groupPath = group.groupName.toLowerCase().replace(/\s+/g, "-");
 
-  if (socketRef.current) {
-    socketRef.current.emit("joinGroup", group._id);
-  }
-  await fetchMessages(group._id);
-};
+    navigate(`/dashboard/group/${groupPath}`);
+
+    if (socketRef.current) {
+      socketRef.current.emit("joinGroup", group._id);
+    }
+    await fetchGroupMessages(group._id);
+  };
 
   // CREATE GROUP
   const createGroup = async () => {
@@ -185,7 +204,7 @@ const ChatPage = () => {
       });
 
       const data = await response.json();
-      console.log("Create Group Response:", data);
+      // console.log("Create Group Response:/", data);
 
       if (response.ok) {
         setGroupName("");
@@ -203,105 +222,127 @@ const ChatPage = () => {
 
   // SOCKET CONNECTION
   useEffect(() => {
-    if (!token) return;
+  if (!token) return;
 
-    const socket = io("http://localhost:3000", {
-      auth: { token },
-      transports: ["websocket"],
+  const socket = io("http://localhost:3000", {
+    auth: { token },
+    transports: ["websocket"],
+  });
+
+  socketRef.current = socket;
+
+  socket.on("connect", () => {
+    console.log("Socket Connected:", socket.id);
+  });
+
+  // PRIVATE MESSAGE
+  socket.on("newMessage", (message) => {
+    const activeUser = selectedUserRef.current;
+
+    setMessages((prev) => {
+      if (
+        activeUser &&
+        (getId(message.senderId) === activeUser._id ||
+          getId(message.receiverId) === activeUser._id)
+      ) {
+        return [...prev, message];
+      }
+      return prev;
     });
+  });
 
-    socketRef.current = socket;
+  // GROUP MESSAGE
+  socket.on("receiveGroupMessage", (message) => {
+    const activeGroup = selectedGroupRef.current;
 
-    socket.on("connect", () => {
-      console.log("Socket Connected:", socket.id);
+    setMessages((prev) => {
+      if (activeGroup && getId(message.groupId) === activeGroup._id) {
+        return [...prev, message];
+      }
+      return prev;
     });
+  });
 
-    // PRIVATE MESSAGE
-    socket.on("newMessage", (message) => {
-      const activeUser = selectedUserRef.current;
+  // PRIVATE DELETE
+  socket.on("messageDeleted", (updatedMessage) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg._id === updatedMessage._id ? updatedMessage : msg
+      )
+    );
+  });
 
-      setMessages((prev) => {
-        if (
-          activeUser &&
-          (getId(message.senderId) === activeUser._id ||
-            getId(message.receiverId) === activeUser._id)
-        ) {
-          return [...prev, message];
-        }
-        return prev;
-      });
-    });
+  // PRIVATE UPDATE
+  socket.on("messageUpdated", (updatedMessage) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg._id === updatedMessage._id ? updatedMessage : msg
+      )
+    );
+  });
 
-    // GROUP MESSAGE
-    socket.on("receiveGroupMessage", (message) => {
-      const activeGroup = selectedGroupRef.current;
+  // GROUP DELETE
+  socket.on("groupMessageDeleted", (updatedMessage) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg._id === updatedMessage._id ? updatedMessage : msg
+      )
+    );
+  });
 
-      setMessages((prev) => {
-        if (activeGroup && getId(message.groupId) === activeGroup._id) {
-          return [...prev, message];
-        }
-        return prev;
-      });
-    });
+  // GROUP UPDATE
+  socket.on("groupMessageUpdated", (updatedMessage) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg._id === updatedMessage._id ? updatedMessage : msg
+      )
+    );
+  });
 
-    socket.on("disconnect", () => {
-      console.log("Socket Disconnected");
-    });
+  socket.on("disconnect", () => {
+    console.log("Socket Disconnected");
+  });
 
-    return () => {
-      socket.disconnect();
-    };
-  }, [token]);
-
+  return () => {
+    socket.disconnect();
+  };
+}, [token]);
 
   useEffect(() => {
-  if (!users.length && !groups.length) return;
+    if (!users.length && !groups.length) return;
 
-  // USER ROUTE
-  if (username) {
-    const matchedUser = users.find((user) => {
-      const userPath = `${user.firstName}-${user.lastName}`
-        .toLowerCase()
-        .replace(/\s+/g, "-");
+    // USER ROUTE
+    if (username) {
+      const matchedUser = users.find((user) => {
+        const userPath = `${user.firstName}-${user.lastName}`
+          .toLowerCase()
+          .replace(/\s+/g, "-");
 
-      return userPath === username;
-    });
+        return userPath === username;
+      });
 
-    if (
-      matchedUser &&
-      selectedUser?._id !== matchedUser._id
-    ) {
-      setTimeout(() => {
-        handleSelectUser(matchedUser);
-      }, 0);
+      if (matchedUser && selectedUser?._id !== matchedUser._id) {
+        setTimeout(() => {
+          handleSelectUser(matchedUser);
+        }, 0);
+      }
     }
-  }
 
-  // GROUP ROUTE
-  if (routeGroupName) {
-    const matchedGroup = groups.find((group) => {
-      const groupPath = group.groupName
-        .toLowerCase()
-        .replace(/\s+/g, "-");
+    // GROUP ROUTE
+    if (routeGroupName) {
+      const matchedGroup = groups.find((group) => {
+        const groupPath = group.groupName.toLowerCase().replace(/\s+/g, "-");
 
-      return groupPath === routeGroupName;
-    });
+        return groupPath === routeGroupName;
+      });
 
-    if (
-      matchedGroup &&
-      selectedGroup?._id !== matchedGroup._id
-    ) {
-      setTimeout(() => {
-        handleSelectGroup(matchedGroup);
-      }, 0);
+      if (matchedGroup && selectedGroup?._id !== matchedGroup._id) {
+        setTimeout(() => {
+          handleSelectGroup(matchedGroup);
+        }, 0);
+      }
     }
-  }
-}, [
-  username,
-  routeGroupName,
-  users,
-  groups,
-]);
+  }, [username, routeGroupName, users, groups]);
 
   // SEND PRIVATE MESSAGE
   const handleSendMessage = async (e) => {
@@ -356,38 +397,143 @@ const ChatPage = () => {
     setNewMessage("");
   };
 
-  return (
-  <>
-    <Sidebar
-      users={users}
-      groups={groups}
-      selectedUser={selectedUser}
-      selectedGroup={selectedGroup}
-      handleSelectUser={handleSelectUser}
-      handleSelectGroup={handleSelectGroup}
-      showCreateGroup={showCreateGroup}
-      setShowCreateGroup={setShowCreateGroup}
-      groupName={groupName}
-      setGroupName={setGroupName}
-      selectedMembers={selectedMembers}
-      setSelectedMembers={setSelectedMembers}
-      createGroup={createGroup}
-    />
+  // const handleDeleteMessage = async (messageId) => {
+  //   try {
+  //     const endpoint = selectedGroup
+  //     ? `${API_BASE_URL}/group/message/${messageId}`
+  //     : `${API_BASE_URL}/message/${messageId}`;
 
-    <ChatWindow
-      selectedUser={selectedUser}
-      selectedGroup={selectedGroup}
-      messages={messages}
-      token={token}
-      newMessage={newMessage}
-      setNewMessage={setNewMessage}
-      handleSendMessage={handleSendMessage}
-      handleSendGroupMessage={handleSendGroupMessage}
-      loading={loading}
-      getId={getId}
-    />
-  </>
-);
+
+  //     const response = await fetch(endpoint, {
+  //       method: "DELETE",
+  //       headers: {
+  //         Authorization: `Bearer ${token}`,
+  //       },
+  //     });
+
+  //     const data = await response.json();
+
+  //     if (response.ok) {
+  //       setMessages((prev) =>
+  //         prev.map((msg) =>
+  //           msg._id === messageId ? data.deletedMessage : msg,
+  //         ),
+  //       );
+  //     }
+  //   } catch (error) {
+  //     console.error("Delete Message Error:", error);
+  //   }
+  // };
+    const handleDeleteMessage = (messageId) => {
+  if (!socketRef.current) return;
+
+  if (selectedGroup) {
+    socketRef.current.emit("deleteGroupMessage", {
+      groupId: selectedGroup._id,
+      messageId,
+    });
+  } else {
+    socketRef.current.emit("deletePrivateMessage", {
+      receiverId: selectedUser._id,
+      messageId,
+    });
+  }
+};
+
+
+
+  // const handleUpdateMessage = async (messageId) => {
+  //   try {
+  //      const endpoint = selectedGroup
+  //     ? `${API_BASE_URL}/group/message/${messageId}`
+  //     : `${API_BASE_URL}/message/${messageId}`;
+  //     const response = await fetch(endpoint, {
+  //       method: "PUT",
+  //       headers: {
+  //         "Content-Type": "application/json",
+  //         Authorization: `Bearer ${token}`,
+  //       },
+  //       body: JSON.stringify({
+  //         message: editedText,
+  //       }),
+  //     });
+
+  //     const data = await response.json();
+
+  //     if (response.ok) {
+  //       setMessages((prev) =>
+  //         prev.map((msg) =>
+  //           msg._id === messageId ? data.updatedMessage : msg,
+  //         ),
+  //       );
+
+  //       setEditingMessageId(null);
+  //       setEditedText("");
+  //     }
+  //   } catch (error) {
+  //     console.error("Update Message Error:", error);
+  //   }
+  // };
+  const handleUpdateMessage = (messageId) => {
+  if (!socketRef.current || !editedText.trim()) return;
+
+  if (selectedGroup) {
+    socketRef.current.emit("updateGroupMessage", {
+      groupId: selectedGroup._id,
+      messageId,
+      newMessage: editedText,
+    });
+  } else {
+    socketRef.current.emit("updatePrivateMessage", {
+      receiverId: selectedUser._id,
+      messageId,
+      newMessage: editedText,
+    });
+  }
+
+  setEditingMessageId(null);
+  setEditedText("");
+};
+
+
+  return (
+    <>
+      <Sidebar
+        users={users}
+        groups={groups}
+        selectedUser={selectedUser}
+        selectedGroup={selectedGroup}
+        handleSelectUser={handleSelectUser}
+        handleSelectGroup={handleSelectGroup}
+        showCreateGroup={showCreateGroup}
+        setShowCreateGroup={setShowCreateGroup}
+        groupName={groupName}
+        setGroupName={setGroupName}
+        selectedMembers={selectedMembers}
+        setSelectedMembers={setSelectedMembers}
+        createGroup={createGroup}
+      />
+
+      <ChatWindow
+        selectedUser={selectedUser}
+        selectedGroup={selectedGroup}
+        messages={messages}
+        token={token}
+        newMessage={newMessage}
+        setNewMessage={setNewMessage}
+        handleSendMessage={handleSendMessage}
+        handleSendGroupMessage={handleSendGroupMessage}
+        loading={loading}
+        getId={getId}
+        editingMessageId={editingMessageId}
+        setEditingMessageId={setEditingMessageId}
+        editedText={editedText}
+        setEditedText={setEditedText}
+        handleDeleteMessage={handleDeleteMessage}
+        handleUpdateMessage={handleUpdateMessage}
+      />
+    </>
+  );
 };
 
 export default ChatPage;
