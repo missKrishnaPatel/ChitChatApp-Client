@@ -424,21 +424,47 @@ const ChatPage = () => {
   //     console.error("Delete Message Error:", error);
   //   }
   // };
-    const handleDeleteMessage = (messageId) => {
-  if (!socketRef.current) return;
+    const handleDeleteMessage = async (messageId) => {
+      try {
+        const endpoint = selectedGroup
+          ? `${API_BASE_URL}/group/message/${messageId}`
+          : `${API_BASE_URL}/message/${messageId}`;
 
-  if (selectedGroup) {
-    socketRef.current.emit("deleteGroupMessage", {
-      groupId: selectedGroup._id,
-      messageId,
-    });
-  } else {
-    socketRef.current.emit("deletePrivateMessage", {
-      receiverId: selectedUser._id,
-      messageId,
-    });
-  }
-};
+        const response = await fetch(endpoint, {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          console.error("Delete Message Error:", data);
+          return;
+        }
+
+        const deletedMessage =
+          data.deletedMessage || data.data?.deletedMessage || data.message || data.data?.message;
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg._id === messageId ? deletedMessage : msg,
+          ),
+        );
+
+        if (socketRef.current) {
+          socketRef.current.emit(
+            selectedGroup ? "deleteGroupMessage" : "deletePrivateMessage",
+            selectedGroup
+              ? { groupId: selectedGroup._id, messageId }
+              : { receiverId: selectedUser._id, messageId },
+          );
+        }
+      } catch (error) {
+        console.error("Delete Message Error:", error);
+      }
+    };
 
 
 
@@ -474,26 +500,66 @@ const ChatPage = () => {
   //     console.error("Update Message Error:", error);
   //   }
   // };
-  const handleUpdateMessage = (messageId) => {
-  if (!socketRef.current || !editedText.trim()) return;
+  const handleUpdateMessage = async (messageId) => {
+    if (!editedText.trim()) return;
 
-  if (selectedGroup) {
-    socketRef.current.emit("updateGroupMessage", {
-      groupId: selectedGroup._id,
-      messageId,
-      newMessage: editedText,
-    });
-  } else {
-    socketRef.current.emit("updatePrivateMessage", {
-      receiverId: selectedUser._id,
-      messageId,
-      newMessage: editedText,
-    });
-  }
+    try {
+      const endpoint = selectedGroup
+        ? `${API_BASE_URL}/group/message/${messageId}`
+        : `${API_BASE_URL}/message/${messageId}`;
 
-  setEditingMessageId(null);
-  setEditedText("");
-};
+      const response = await fetch(endpoint, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          message: editedText,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error("Update Message Error:", data);
+        return;
+      }
+
+      const updatedMessage =
+        data.updatedMessage || data.data?.updatedMessage || data.message || data.data?.message;
+
+      if (updatedMessage) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg._id === messageId ? updatedMessage : msg,
+          ),
+        );
+      }
+
+      setEditingMessageId(null);
+      setEditedText("");
+
+      if (socketRef.current) {
+        socketRef.current.emit(
+          selectedGroup ? "updateGroupMessage" : "updatePrivateMessage",
+          selectedGroup
+            ? {
+                groupId: selectedGroup._id,
+                messageId,
+                newMessage: editedText,
+              }
+            : {
+                receiverId: selectedUser._id,
+                messageId,
+                newMessage: editedText,
+              },
+        );
+      }
+    } catch (error) {
+      console.error("Update Message Error:", error);
+    }
+  };
 
 
   return (
