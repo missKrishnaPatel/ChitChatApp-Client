@@ -1,3 +1,13 @@
+const statusLabel = (isOnline, lastSeen) => {
+  if (isOnline) return "Online";
+  if (!lastSeen) return "Offline";
+  const date = lastSeen instanceof Date ? lastSeen : new Date(lastSeen);
+  return `Last seen ${date.toLocaleString([], {
+    dateStyle: "short",
+    timeStyle: "short",
+  })}`;
+};
+
 const ChatWindow = ({
   selectedUser,
   selectedGroup,
@@ -28,6 +38,30 @@ const ChatWindow = ({
                 ? `${selectedUser.firstName} ${selectedUser.lastName}`
                 : selectedGroup?.groupName}
             </h3>
+            {selectedUser && (
+              <div className="mt-1 flex items-center gap-2">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    selectedUser.isOnline ? "bg-green-500" : "bg-gray-400"
+                  }`}
+                  title={statusLabel(
+                    selectedUser.isOnline,
+                    selectedUser.lastSeen,
+                  )}
+                  aria-hidden
+                />
+                <p
+                  className={`text-sm ${
+                    selectedUser.isOnline ? "text-green-600" : "text-gray-500"
+                  }`}
+                >
+                  {statusLabel(
+                    selectedUser.isOnline,
+                    selectedUser.lastSeen,
+                  )}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* MESSAGES */}

@@ -1,3 +1,13 @@
+// const statusLabel = (isOnline, lastSeen) => {
+//   if (isOnline) return "Online";
+//   if (!lastSeen) return "Offline";
+//   const date = lastSeen instanceof Date ? lastSeen : new Date(lastSeen);
+//   return `Last seen ${date.toLocaleString([], {
+//     dateStyle: "short",
+//     timeStyle: "short",
+//   })}`;
+// };
+
 const Sidebar = ({
   users,
   groups,
@@ -85,7 +95,27 @@ const Sidebar = ({
               selectedUser?._id === user._id ? "bg-indigo-100" : ""
             }`}
           >
-            {user.firstName} {user.lastName}
+            <div className="flex items-center gap-2">
+              {/* <span
+                className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                  user.isOnline ? "bg-green-500" : "bg-gray-400"
+                }`}
+                title={statusLabel(user.isOnline, user.lastSeen)}
+                aria-hidden
+              /> */}
+              <div className="min-w-0 flex-1">
+                <div className="font-medium">
+                  {user.firstName} {user.lastName}
+                </div>
+                {/* <div
+                  className={`text-xs ${
+                    user.isOnline ? "text-green-600" : "text-gray-500"
+                  }`}
+                >
+                  {statusLabel(user.isOnline, user.lastSeen)}
+                </div> */}
+              </div>
+            </div>
           </div>
         ))}
       </div>

@@ -54,13 +54,15 @@ const ChatPage = () => {
       // console.log("Users API:", data);
 
       if (response.ok) {
-        setUsers(
-          data.getAllUser ||
-            data.users ||
-            data.data?.getAllUser ||
-            data.data?.users ||
-            [],
-        );
+        const userList = data.getAllUser || data.users || data.data?.getAllUser || data.data?.users || [];
+
+        const usersWithStatus = userList.map((user) => ({
+          ...user,
+          isOnline: user.isOnline ?? false,
+          lastSeen: user.lastSeen ?? null,
+        }));
+
+        setUsers(usersWithStatus);
       }
     } catch (error) {
       console.error("Fetch Users Error:", error);
@@ -233,6 +235,66 @@ const ChatPage = () => {
 
   socket.on("connect", () => {
     console.log("Socket Connected:", socket.id);
+    setTimeout(() => {
+    fetchUsers();
+  }, 500); 
+  });
+
+  const matchesUserId = (idA, idB) => String(idA) === String(idB);
+
+  // USER ONLINE STATUS
+  socket.on("userOnline", (userId) => {
+    setUsers((prev) =>
+      prev.map((user) =>
+        matchesUserId(user._id, userId)
+          ? { ...user, isOnline: true, lastSeen: null }
+          : user,
+      ),
+    );
+
+    setSelectedUser((prev) =>
+      prev && matchesUserId(prev._id, userId)
+        ? { ...prev, isOnline: true, lastSeen: null }
+        : prev,
+    );
+  });
+
+  // USER OFFLINE STATUS
+  socket.on("userOffline", (payload) => {
+    const { userId, lastSeen } =
+      typeof payload === "string"
+        ? { userId: payload, lastSeen: null }
+        : payload || {};
+
+    setUsers((prev) =>
+      prev.map((user) =>
+        matchesUserId(user._id, userId)
+          ? { ...user, isOnline: false, lastSeen: lastSeen || new Date() }
+          : user,
+      ),
+    );
+
+    setSelectedUser((prev) =>
+      prev && matchesUserId(prev._id, userId)
+        ? { ...prev, isOnline: false, lastSeen: lastSeen || new Date() }
+        : prev,
+    );
+  });
+
+  // USER STATUS CHANGE FALLBACK
+  socket.on("userStatusChanged", ({ userId, isOnline, lastSeen }) => {
+    setUsers((prev) =>
+      prev.map((user) =>
+        matchesUserId(user._id, userId)
+          ? { ...user, isOnline, lastSeen }
+          : user,
+      ),
+    );
+    setSelectedUser((prev) =>
+      prev && matchesUserId(prev._id, userId)
+        ? { ...prev, isOnline, lastSeen }
+        : prev,
+    );
   });
 
   // PRIVATE MESSAGE
@@ -298,6 +360,7 @@ const ChatPage = () => {
       )
     );
   });
+
 
   socket.on("disconnect", () => {
     console.log("Socket Disconnected");
@@ -468,38 +531,7 @@ const ChatPage = () => {
 
 
 
-  // const handleUpdateMessage = async (messageId) => {
-  //   try {
-  //      const endpoint = selectedGroup
-  //     ? `${API_BASE_URL}/group/message/${messageId}`
-  //     : `${API_BASE_URL}/message/${messageId}`;
-  //     const response = await fetch(endpoint, {
-  //       method: "PUT",
-  //       headers: {
-  //         "Content-Type": "application/json",
-  //         Authorization: `Bearer ${token}`,
-  //       },
-  //       body: JSON.stringify({
-  //         message: editedText,
-  //       }),
-  //     });
-
-  //     const data = await response.json();
-
-  //     if (response.ok) {
-  //       setMessages((prev) =>
-  //         prev.map((msg) =>
-  //           msg._id === messageId ? data.updatedMessage : msg,
-  //         ),
-  //       );
-
-  //       setEditingMessageId(null);
-  //       setEditedText("");
-  //     }
-  //   } catch (error) {
-  //     console.error("Update Message Error:", error);
-  //   }
-  // };
+  
   const handleUpdateMessage = async (messageId) => {
     if (!editedText.trim()) return;
 
@@ -583,6 +615,7 @@ const ChatPage = () => {
       <ChatWindow
         selectedUser={selectedUser}
         selectedGroup={selectedGroup}
+        users={users}
         messages={messages}
         token={token}
         newMessage={newMessage}
