@@ -1,12 +1,4 @@
-// const statusLabel = (isOnline, lastSeen) => {
-//   if (isOnline) return "Online";
-//   if (!lastSeen) return "Offline";
-//   const date = lastSeen instanceof Date ? lastSeen : new Date(lastSeen);
-//   return `Last seen ${date.toLocaleString([], {
-//     dateStyle: "short",
-//     timeStyle: "short",
-//   })}`;
-// };
+
 
 const Sidebar = ({
   users,
@@ -22,12 +14,47 @@ const Sidebar = ({
   selectedMembers,
   setSelectedMembers,
   createGroup,
+  handleUpload,
+  currentUser,
 }) => {
   return (
     <div className="w-1/4 bg-white border-r overflow-y-auto">
       <div className="p-4 border-b">
         <h2 className="text-2xl font-bold text-indigo-600">Chats</h2>
       </div>
+
+      
+
+      
+      <div className="p-4 border-b flex flex-col items-center gap-2">
+
+        <img
+          src={currentUser?.profilePicture || "/default.png"}
+          className="w-14 h-14 rounded-full object-cover"
+          alt="profile"
+        />
+
+        <label className="text-xs text-blue-500 cursor-pointer">
+          Change Photo
+          <input
+            type="file"
+            className="hidden"
+            accept="image/*"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleUpload(file);
+              e.target.value = "";
+            }}
+          />
+        </label>
+
+        <div className="font-medium">
+          {currentUser?.firstName} {currentUser?.lastName}
+        </div>
+
+      </div>
+
+
 
       {/* CREATE GROUP BUTTON */}
       <div className="p-3 border-b">
@@ -83,6 +110,7 @@ const Sidebar = ({
         </div>
       )}
 
+
       {/* USERS */}
       <div className="p-2">
         <h3 className="font-bold text-gray-600 mb-2">Users</h3>
@@ -96,24 +124,28 @@ const Sidebar = ({
             }`}
           >
             <div className="flex items-center gap-2">
-              {/* <span
+              <span
                 className={`h-2.5 w-2.5 shrink-0 rounded-full ${
                   user.isOnline ? "bg-green-500" : "bg-gray-400"
                 }`}
-                title={statusLabel(user.isOnline, user.lastSeen)}
                 aria-hidden
-              /> */}
+              />
+              <img
+                src={user.profilePicture || "/default.png"}
+                alt="profile"
+                className="w-10 h-10 rounded-full object-cover"
+              />
               <div className="min-w-0 flex-1">
                 <div className="font-medium">
                   {user.firstName} {user.lastName}
                 </div>
-                {/* <div
+                <div
                   className={`text-xs ${
                     user.isOnline ? "text-green-600" : "text-gray-500"
                   }`}
                 >
-                  {statusLabel(user.isOnline, user.lastSeen)}
-                </div> */}
+                  {user.isOnline ? "Online" : "Offline"}
+                </div>
               </div>
             </div>
           </div>
@@ -124,17 +156,23 @@ const Sidebar = ({
       <div className="p-2 border-t">
         <h3 className="font-bold text-gray-600 mb-2">Groups</h3>
 
-        {groups.map((group) => (
-          <div
-            key={group._id}
-            onClick={() => handleSelectGroup(group)}
-            className={`p-3 cursor-pointer rounded hover:bg-green-50 ${
-              selectedGroup?._id === group._id ? "bg-green-100" : ""
-            }`}
-          >
-            {group.groupName}
-          </div>
-        ))}
+        {/* GROUPS */}
+{groups.map((group) => (
+  <div
+    key={group._id}
+    onClick={() => handleSelectGroup(group)}
+    className={`p-3 cursor-pointer rounded hover:bg-green-50 flex items-center gap-3 ${
+      selectedGroup?._id === group._id ? "bg-green-100" : ""
+    }`}
+  >
+    <img
+      src={group.groupImage || "/default-group.png"}
+      alt="group"
+      className="w-10 h-10 rounded-full object-cover shrink-0"
+    />
+    <span className="font-medium">{group.groupName}</span>
+  </div>
+))}
       </div>
     </div>
   );

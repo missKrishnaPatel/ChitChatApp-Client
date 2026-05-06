@@ -13,6 +13,7 @@ export const registerSocketEvents = ({
   fetchUsers,
   setGroups,
     setSelectedGroup,
+  setCurrentUser,
 }) => {
   if (!socket) return;
 
@@ -72,6 +73,72 @@ export const registerSocketEvents = ({
         ? { ...prev, isOnline, lastSeen }
         : prev
     );
+  });
+
+  socket.on("userProfileUpdated", ({ userId, profilePicture, user }) => {
+    const nextPic = user?.profilePicture || profilePicture;
+    if (!userId || !nextPic) return;
+
+    if (setCurrentUser && user) {
+      setCurrentUser((prev) =>
+        prev && matchesUserId(prev._id, userId) ? user : prev
+      );
+    } else if (setCurrentUser) {
+      setCurrentUser((prev) =>
+        prev && matchesUserId(prev._id, userId)
+          ? { ...prev, profilePicture: nextPic }
+          : prev
+      );
+    }
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        matchesUserId(u._id, userId) ? { ...u, profilePicture: nextPic } : u
+      )
+    );
+
+    setSelectedUser((prev) =>
+      prev && matchesUserId(prev._id, userId)
+        ? { ...prev, profilePicture: nextPic }
+        : prev
+    );
+
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        members: (g.members ?? []).map((m) =>
+          matchesUserId(m?._id ?? m, userId)
+            ? { ...(typeof m === "object" ? m : {}), _id: userId, profilePicture: nextPic }
+            : m
+        ),
+        admins: (g.admins ?? []).map((a) =>
+          matchesUserId(a?._id ?? a, userId)
+            ? { ...(typeof a === "object" ? a : {}), _id: userId, profilePicture: nextPic }
+            : a
+        ),
+      }))
+    );
+
+    if (selectedGroupRef?.current) {
+      const gid = selectedGroupRef.current._id;
+      setSelectedGroup((prev) =>
+        prev && String(prev._id) === String(gid)
+          ? {
+              ...prev,
+              members: (prev.members ?? []).map((m) =>
+                matchesUserId(m?._id ?? m, userId)
+                  ? { ...m, profilePicture: nextPic }
+                  : m
+              ),
+              admins: (prev.admins ?? []).map((a) =>
+                matchesUserId(a?._id ?? a, userId)
+                  ? { ...a, profilePicture: nextPic }
+                  : a
+              ),
+            }
+          : prev
+      );
+    }
   });
 
 

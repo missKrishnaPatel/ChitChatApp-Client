@@ -12,7 +12,9 @@ import {
 } from "../socket/socketEmitters";
 
 const API_BASE_URL =
-  import.meta.env.REACT_APP_API_BASE_URL || "http://localhost:3000/api/v1";
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.REACT_APP_API_BASE_URL ||
+  "http://localhost:3000/api/v1";
 
 const getId = (value) => {
   if (!value) return "";
@@ -22,6 +24,7 @@ const getId = (value) => {
 const ChatPage = () => {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -46,6 +49,26 @@ const ChatPage = () => {
   useEffect(() => { selectedGroupRef.current = selectedGroup; }, [selectedGroup]);
 
   //Fetching data
+
+  const fetchMe = useCallback(async () => {
+  if (!token) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setCurrentUser(data.user);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}, [token]);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -75,9 +98,13 @@ const ChatPage = () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json();
-      if (response.ok) {
-        setGroups(data.message.groups || data.data?.message.groups || []);
+      console.log("Groups raw response:", data); 
+      if (!response.ok) {
+        console.error("Fetch Groups Error:", response.status, data);
+        setGroups([]);
+        return;
       }
+      setGroups(data.groups|| data.data?.groups||data.message?.groups|| []);
     } catch (error) {
       console.error("Fetch Groups Error:", error);
     }
@@ -133,8 +160,11 @@ const ChatPage = () => {
     }
   };
 
-  //GROUP MEMBER Management
 
+
+
+
+  //GROUP MEMBER Management
   const addMember = async (groupId, userId) => {
     try {
       const response = await fetch(`${API_BASE_URL}/group/add-member`, {
@@ -178,9 +208,122 @@ const ChatPage = () => {
     }
   };
 
-  //INITIAL LOAD 
 
-  const fetchUsersRef = useRef(fetchUsers);
+
+
+
+
+  //profile pic
+  const handleUpload = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/upload-profile-picture`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  const data = await res.json();
+
+  if (res.ok) {
+    const updated = data.user || data.data?.user;
+    if (!updated) return;
+
+    setCurrentUser((prev) =>
+      prev && String(prev._id) === String(updated._id) ? updated : prev
+    );
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        String(u._id) === String(updated._id)
+          ? { ...u, profilePicture: updated.profilePicture }
+          : u
+      )
+    );
+
+    setSelectedUser((prev) =>
+      prev && String(prev._id) === String(updated._id)
+        ? { ...prev, profilePicture: updated.profilePicture }
+        : prev
+    );
+
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        members: (g.members ?? []).map((m) =>
+          String(m?._id ?? m) === String(updated._id)
+            ? { ...(typeof m === "object" ? m : {}), _id: updated._id, firstName: updated.firstName, lastName: updated.lastName, profilePicture: updated.profilePicture }
+            : m
+        ),
+        admins: (g.admins ?? []).map((a) =>
+          String(a?._id ?? a) === String(updated._id)
+            ? { ...(typeof a === "object" ? a : {}), _id: updated._id, firstName: updated.firstName, lastName: updated.lastName, profilePicture: updated.profilePicture }
+            : a
+        ),
+      }))
+    );
+
+    setSelectedGroup((prev) =>
+      prev
+        ? {
+            ...prev,
+            members: (prev.members ?? []).map((m) =>
+              String(m?._id ?? m) === String(updated._id)
+                ? { ...m, profilePicture: updated.profilePicture }
+                : m
+            ),
+            admins: (prev.admins ?? []).map((a) =>
+              String(a?._id ?? a) === String(updated._id)
+                ? { ...a, profilePicture: updated.profilePicture }
+                : a
+            ),
+          }
+        : prev
+    );
+  }
+};
+
+
+
+
+
+//GroupImage
+const handleGroupImageUpload = async (file, groupId) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("groupId", groupId);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/group/update-image`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const data = await response.json();
+    console.log("Group image upload response:", data); // <-- ADD THIS
+    
+    if (response.ok) {
+      const updated = data.group || data.data?.group || data.message?.group;
+      console.log("Updated group:", updated);        // <-- AND THIS
+      console.log("groupImage URL:", updated?.groupImage); // <-- AND THIS
+      if (!updated) return;
+      setGroups((prev) => prev.map((g) => g._id === updated._id ? updated : g));
+      setSelectedGroup((prev) => prev?._id === updated._id ? updated : prev);
+    }
+  } catch (error) {
+    console.error("Group Image Upload Error:", error);
+  }
+};
+
+
+
+
+
+  //INITIAL LOAD 
+const fetchUsersRef = useRef(fetchUsers);
 const fetchGroupsRef = useRef(fetchGroups);
 
 useEffect(() => {
@@ -190,12 +333,22 @@ useEffect(() => {
 
 useEffect(() => {
   if (!token) return;
-  fetchUsersRef.current();
-  fetchGroupsRef.current();
-}, [token]); // only re-runs when token actually changes
+
+  const loadData = async () => {
+    await fetchUsers();
+    await fetchGroups();
+    await fetchMe();
+  };
+
+  loadData();
+}, [token]);// 
+
+
+
+
+
 
   //SOCKET SETUP 
-
   useEffect(() => {
     if (!token) return;
     const socket = connectSocket(token);
@@ -203,13 +356,17 @@ useEffect(() => {
     registerSocketEvents({
       socket, setUsers, setSelectedUser, setMessages,
       selectedUserRef, selectedGroupRef, fetchUsers, setGroups,setSelectedGroup, 
+      setCurrentUser,
     });
     return () => disconnectSocket();
   }, [token]);
 
-  //SELECT HANDLERS 
 
-  const handleSelectUser = async (user) => {
+
+
+
+  //SELECT HANDLERS 
+   const handleSelectUser = async (user) => {
     setSelectedUser(user);
     setSelectedGroup(null);
     setMessages([]);
@@ -227,8 +384,11 @@ useEffect(() => {
     await fetchGroupMessages(group._id);
   };
 
-  // ─── URL ROUTE SYNC ───────────────────────────────────────────────────────
 
+
+
+
+  //URL ROUTE SYNC
   useEffect(() => {
     if (!users.length && !groups.length) return;
     if (username) {
@@ -249,8 +409,14 @@ useEffect(() => {
     }
   }, [username, routeGroupName, users, groups]);
 
-  // ─── CREATE GROUP ─────────────────────────────────────────────────────────
 
+
+
+
+
+
+  
+  //CREATE GROUP
   const createGroup = async () => {
     if (!groupName.trim() || selectedMembers.length === 0) {
       alert("Please enter group name and select members");
@@ -273,8 +439,15 @@ useEffect(() => {
     }
   };
 
-  // ─── SEND MESSAGES ────────────────────────────────────────────────────────
 
+
+
+
+
+
+
+
+  //SEND MESSAGES
   const handleSendMessage = async (e, file = null) => {
     e.preventDefault();
     if (!newMessage.trim() && !file) return;
@@ -331,8 +504,14 @@ useEffect(() => {
     setNewMessage("");
   };
 
-  //DELETE / UPDATE 
 
+
+
+
+
+
+
+  //DELETE / UPDATE 
   const handleDeleteMessage = async (messageId) => {
     try {
       const endpoint = selectedGroup
@@ -379,7 +558,7 @@ useEffect(() => {
     }
   };
 
-  //RENDER 
+  
 
   return (
     <>
@@ -397,6 +576,9 @@ useEffect(() => {
         selectedMembers={selectedMembers}
         setSelectedMembers={setSelectedMembers}
         createGroup={createGroup}
+        handleUpload={handleUpload}
+        currentUser={currentUser}
+        handleGroupImageUpload={handleGroupImageUpload}
       />
       <ChatWindow
         selectedUser={selectedUser}
@@ -423,6 +605,7 @@ useEffect(() => {
         removeMember={removeMember}
         addMember={addMember}
         makeAdmin={makeAdmin}
+        handleGroupImageUpload={handleGroupImageUpload}
       />
     </>
   );
