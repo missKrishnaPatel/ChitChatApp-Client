@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
 import { useNavigate, useParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import ChatWindow from "../components/Chatwindow";
+import { connectSocket, disconnectSocket } from "../socket/socketClient";
+import { registerSocketEvents } from "../socket/socketEvents";
+import {
+  joinGroup,
+  emitGroupMessage,
+  emitDeleteMessage,
+  emitUpdateMessage,
+} from "../socket/socketEmitters";
 
-const API_BASE_URL = "http://localhost:3000/api/v1";
+const API_BASE_URL =
+  import.meta.env.VITE_BACKEND_URL ||
+  import.meta.env.REACT_APP_API_BASE_URL ||
+  "http://localhost:3000/api/v1";
 
 const getId = (value) => {
   if (!value) return "";
@@ -14,6 +24,7 @@ const getId = (value) => {
 const ChatPage = () => {
   const [users, setUsers] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -21,112 +32,113 @@ const ChatPage = () => {
   const [loading, setLoading] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editedText, setEditedText] = useState("");
-
   const [groupName, setGroupName] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [showAddUser, setShowAddUser] = useState(false);
+
   const navigate = useNavigate();
   const { username, groupName: routeGroupName } = useParams();
   const token = localStorage.getItem("token");
   const socketRef = useRef(null);
   const selectedUserRef = useRef(null);
   const selectedGroupRef = useRef(null);
-    console.log(messages)
-  // KEEP REFS UPDATED
-  useEffect(() => {
-    selectedUserRef.current = selectedUser;
-  }, [selectedUser]);
 
-  useEffect(() => {
-    selectedGroupRef.current = selectedGroup;
-  }, [selectedGroup]);
+  useEffect(() => { selectedUserRef.current = selectedUser; }, [selectedUser]);
+  useEffect(() => { selectedGroupRef.current = selectedGroup; }, [selectedGroup]);
 
-  // FETCH USERS
+  //Fetching data
+
+  const fetchMe = useCallback(async () => {
+  if (!token) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setCurrentUser(data.user);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+}, [token]);
+
   const fetchUsers = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/alluser`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
-
       const data = await response.json();
-      // console.log("Users API:", data);
-
       if (response.ok) {
         const userList =
-          data.getAllUser ||
-          data.users ||
-          data.data?.getAllUser ||
-          data.data?.users ||
-          [];
-
-        const usersWithStatus = userList.map((user) => ({
-          ...user,
-          isOnline: user.isOnline ?? false,
-          lastSeen: user.lastSeen ?? null,
-        }));
-
-        setUsers(usersWithStatus);
+          data.getAllUser || data.users || data.data?.getAllUser || data.data?.users || [];
+        setUsers(
+          userList.map((user) => ({
+            ...user,
+            isOnline: user.isOnline ?? false,
+            lastSeen: user.lastSeen ?? null,
+          }))
+        );
       }
     } catch (error) {
       console.error("Fetch Users Error:", error);
     }
   }, [token]);
 
-  // FETCH GROUPS
   const fetchGroups = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/groups`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
-
       const data = await response.json();
-      // console.log("Groups API:", data);
-
-      if (response.ok) {
-        setGroups(data.message.groups || data.data?.message.groups || []);
+      console.log("Groups raw response:", data); 
+      if (!response.ok) {
+        console.error("Fetch Groups Error:", response.status, data);
+        setGroups([]);
+        return;
       }
+      setGroups(data.groups|| data.data?.groups||data.message?.groups|| []);
     } catch (error) {
       console.error("Fetch Groups Error:", error);
     }
   }, [token]);
 
-  // INITIAL LOAD
-  useEffect(() => {
-    if (!token) return;
 
-    const loadData = async () => {
-      await fetchUsers();
-      await fetchGroups();
-    };
 
-    loadData();
-  }, [token, fetchUsers, fetchGroups]);
+  const refreshGroup = useCallback(async (groupId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/group/${groupId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) return;
+      const updated = data.group || data.data?.group || data.message?.group;
+      if (!updated) return;
+      setGroups((prev) => prev.map((g) => (g._id === updated._id ? updated : g)));
+      setSelectedGroup((prev) => (prev?._id === updated._id ? updated : prev));
+    } catch (error) {
+      console.error("Refresh Group Error:", error);
+    }
+  }, [token]);
 
-  // FETCH PRIVATE MESSAGES
   const fetchMessages = async (chatUserId) => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/get-all-messages/${chatUserId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
+      const response = await fetch(`${API_BASE_URL}/get-all-messages/${chatUserId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await response.json();
-
-      if (response.ok) {
-        setMessages(
-          data.allMessages?.messages || data.data?.allMessages?.messages || [],
-        );
-      } else {
-        setMessages([]);
-      }
+      setMessages(
+        response.ok
+          ? data.allMessages?.messages || data.data?.allMessages?.messages || []
+          : []
+      );
     } catch (error) {
       console.error("Fetch Messages Error:", error);
     }
@@ -134,445 +146,387 @@ const ChatPage = () => {
 
   const fetchGroupMessages = async (groupId) => {
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/group-messages/${groupId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
+      const response = await fetch(`${API_BASE_URL}/group-messages/${groupId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await response.json();
-      console.log("Group Messages API:", data);
-
-      if (response.ok) {
-        setMessages(data.message.messages || data.data?.message.messages || []);
-      } else {
-        setMessages([]);
-      }
+      setMessages(
+        response.ok
+          ? data.message.messages || data.data?.message.messages || []
+          : []
+      );
     } catch (error) {
       console.error("Fetch Group Messages Error:", error);
     }
   };
 
-  // SELECT USER
-  const handleSelectUser = async (user) => {
+
+
+
+
+  //GROUP MEMBER Management
+  const addMember = async (groupId, userId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/group/add-member`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ groupId, userId }),
+      });
+      if (!response.ok) { console.error("Add Member Error:", await response.json()); return; }
+      await refreshGroup(groupId);
+    } catch (error) {
+      console.error("Add Member Error:", error);
+    }
+  };
+
+  const removeMember = async (groupId, userId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/group/remove-member`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ groupId, userId }),
+      });
+      // console.log("Heyy", groupId, userId)
+      if (!response.ok) { console.error("Remove Member Error:", await response.json()); return; }
+      await refreshGroup(groupId);
+    } catch (error) {
+      console.error("Remove Member Error:", error);
+    }
+  };
+
+  const makeAdmin = async (groupId, userId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/group/make-admin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ groupId, userId }),
+      });
+      if (!response.ok) { console.error("Make Admin Error:", await response.json()); return; }
+      await refreshGroup(groupId);
+    } catch (error) {
+      console.error("Make Admin Error:", error);
+    }
+  };
+
+
+
+
+
+
+  //profile pic
+  const handleUpload = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const res = await fetch(`${API_BASE_URL}/upload-profile-picture`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  const data = await res.json();
+
+  if (res.ok) {
+    const updated = data.user || data.data?.user;
+    if (!updated) return;
+
+    setCurrentUser((prev) =>
+      prev && String(prev._id) === String(updated._id) ? updated : prev
+    );
+
+    setUsers((prev) =>
+      prev.map((u) =>
+        String(u._id) === String(updated._id)
+          ? { ...u, profilePicture: updated.profilePicture }
+          : u
+      )
+    );
+
+    setSelectedUser((prev) =>
+      prev && String(prev._id) === String(updated._id)
+        ? { ...prev, profilePicture: updated.profilePicture }
+        : prev
+    );
+
+    setGroups((prev) =>
+      prev.map((g) => ({
+        ...g,
+        members: (g.members ?? []).map((m) =>
+          String(m?._id ?? m) === String(updated._id)
+            ? { ...(typeof m === "object" ? m : {}), _id: updated._id, firstName: updated.firstName, lastName: updated.lastName, profilePicture: updated.profilePicture }
+            : m
+        ),
+        admins: (g.admins ?? []).map((a) =>
+          String(a?._id ?? a) === String(updated._id)
+            ? { ...(typeof a === "object" ? a : {}), _id: updated._id, firstName: updated.firstName, lastName: updated.lastName, profilePicture: updated.profilePicture }
+            : a
+        ),
+      }))
+    );
+
+    setSelectedGroup((prev) =>
+      prev
+        ? {
+            ...prev,
+            members: (prev.members ?? []).map((m) =>
+              String(m?._id ?? m) === String(updated._id)
+                ? { ...m, profilePicture: updated.profilePicture }
+                : m
+            ),
+            admins: (prev.admins ?? []).map((a) =>
+              String(a?._id ?? a) === String(updated._id)
+                ? { ...a, profilePicture: updated.profilePicture }
+                : a
+            ),
+          }
+        : prev
+    );
+  }
+};
+
+
+
+
+
+//GroupImage
+const handleGroupImageUpload = async (file, groupId) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("groupId", groupId);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/group/update-image`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+    const data = await response.json();
+    console.log("Group image upload response:", data); // <-- ADD THIS
+    
+    if (response.ok) {
+      const updated = data.group || data.data?.group || data.message?.group;
+      console.log("Updated group:", updated);        // <-- AND THIS
+      console.log("groupImage URL:", updated?.groupImage); // <-- AND THIS
+      if (!updated) return;
+      setGroups((prev) => prev.map((g) => g._id === updated._id ? updated : g));
+      setSelectedGroup((prev) => prev?._id === updated._id ? updated : prev);
+    }
+  } catch (error) {
+    console.error("Group Image Upload Error:", error);
+  }
+};
+
+
+
+
+
+  //INITIAL LOAD 
+const fetchUsersRef = useRef(fetchUsers);
+const fetchGroupsRef = useRef(fetchGroups);
+
+useEffect(() => {
+  fetchUsersRef.current = fetchUsers;
+  fetchGroupsRef.current = fetchGroups;
+}, [fetchUsers, fetchGroups]);
+
+useEffect(() => {
+  if (!token) return;
+
+  const loadData = async () => {
+    await fetchUsers();
+    await fetchGroups();
+    await fetchMe();
+  };
+
+  loadData();
+}, [token]);// 
+
+
+
+
+
+
+  //SOCKET SETUP 
+  useEffect(() => {
+    if (!token) return;
+    const socket = connectSocket(token);
+    socketRef.current = socket;
+    registerSocketEvents({
+      socket, setUsers, setSelectedUser, setMessages,
+      selectedUserRef, selectedGroupRef, fetchUsers, setGroups,setSelectedGroup, 
+      setCurrentUser,
+    });
+    return () => disconnectSocket();
+  }, [token]);
+
+
+
+
+
+  //SELECT HANDLERS 
+   const handleSelectUser = async (user) => {
     setSelectedUser(user);
     setSelectedGroup(null);
     setMessages([]);
     setNewMessage("");
-
-    const userPath = `${user.firstName}-${user.lastName}`
-      .toLowerCase()
-      .replace(/\s+/g, "-");
-
-    navigate(`/dashboard/${userPath}`);
-
+    navigate(`/dashboard/${`${user.firstName}-${user.lastName}`.toLowerCase().replace(/\s+/g, "-")}`);
     await fetchMessages(user._id);
   };
 
-  // SELECT GROUP
   const handleSelectGroup = async (group) => {
     setSelectedGroup(group);
-
     setSelectedUser(null);
-    // setMessages([]);
     setNewMessage("");
-
-    const groupPath = group.groupName.toLowerCase().replace(/\s+/g, "-");
-
-    navigate(`/dashboard/group/${groupPath}`);
-
-    if (socketRef.current) {
-      socketRef.current.emit("joinGroup", group._id);
-    }
+    navigate(`/dashboard/group/${group.groupName.toLowerCase().replace(/\s+/g, "-")}`);
+    if (socketRef.current) joinGroup(group._id);
     await fetchGroupMessages(group._id);
   };
 
-  // CREATE GROUP
-  const createGroup = async () => {
-    try {
-      if (!groupName.trim() || selectedMembers.length === 0) {
-        alert("Please enter group name and select members");
-        return;
-      }
 
+
+
+
+  //URL ROUTE SYNC
+  useEffect(() => {
+    if (!users.length && !groups.length) return;
+    if (username) {
+      const matchedUser = users.find(
+        (user) => `${user.firstName}-${user.lastName}`.toLowerCase().replace(/\s+/g, "-") === username
+      );
+      if (matchedUser && selectedUser?._id !== matchedUser._id) {
+        setTimeout(() => handleSelectUser(matchedUser), 0);
+      }
+    }
+    if (routeGroupName) {
+      const matchedGroup = groups.find(
+        (group) => group.groupName.toLowerCase().replace(/\s+/g, "-") === routeGroupName
+      );
+      if (matchedGroup && selectedGroup?._id !== matchedGroup._id) {
+        setTimeout(() => handleSelectGroup(matchedGroup), 0);
+      }
+    }
+  }, [username, routeGroupName, users, groups]);
+
+
+
+
+
+
+
+  
+  //CREATE GROUP
+  const createGroup = async () => {
+    if (!groupName.trim() || selectedMembers.length === 0) {
+      alert("Please enter group name and select members");
+      return;
+    }
+    try {
       const response = await fetch(`${API_BASE_URL}/group`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          groupName,
-          members: selectedMembers,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ groupName, members: selectedMembers }),
       });
-
-      const data = await response.json();
-      // console.log("Create Group Response:/", data);
-
       if (response.ok) {
         setGroupName("");
         setSelectedMembers([]);
         setShowCreateGroup(false);
-
         await fetchGroups();
-      } else {
-        console.error(data.message || "Group creation failed");
       }
     } catch (error) {
       console.error("Create Group Error:", error);
     }
   };
 
-  // SOCKET CONNECTION
-  useEffect(() => {
-    if (!token) return;
 
-    const socket = io("http://localhost:3000", {
-      auth: { token },
-      transports: ["websocket"],
-    });
 
-    socketRef.current = socket;
 
-    socket.on("connect", () => {
-      console.log("Socket Connected:", socket.id);
-      setTimeout(() => {
-        fetchUsers();
-      }, 500);
-    });
 
-    const matchesUserId = (idA, idB) => String(idA) === String(idB);
 
-    // USER ONLINE STATUS
-    socket.on("userOnline", (userId) => {
-      setUsers((prev) =>
-        prev.map((user) =>
-          matchesUserId(user._id, userId)
-            ? { ...user, isOnline: true, lastSeen: null }
-            : user,
-        ),
-      );
 
-      setSelectedUser((prev) =>
-        prev && matchesUserId(prev._id, userId)
-          ? { ...prev, isOnline: true, lastSeen: null }
-          : prev,
-      );
-    });
 
-    // USER OFFLINE STATUS
-    socket.on("userOffline", (payload) => {
-      const { userId, lastSeen } =
-        typeof payload === "string"
-          ? { userId: payload, lastSeen: null }
-          : payload || {};
 
-      setUsers((prev) =>
-        prev.map((user) =>
-          matchesUserId(user._id, userId)
-            ? { ...user, isOnline: false, lastSeen: lastSeen || new Date() }
-            : user,
-        ),
-      );
-
-      setSelectedUser((prev) =>
-        prev && matchesUserId(prev._id, userId)
-          ? { ...prev, isOnline: false, lastSeen: lastSeen || new Date() }
-          : prev,
-      );
-    });
-
-    // USER STATUS CHANGE FALLBACK
-    socket.on("userStatusChanged", ({ userId, isOnline, lastSeen }) => {
-      setUsers((prev) =>
-        prev.map((user) =>
-          matchesUserId(user._id, userId)
-            ? { ...user, isOnline, lastSeen }
-            : user,
-        ),
-      );
-      setSelectedUser((prev) =>
-        prev && matchesUserId(prev._id, userId)
-          ? { ...prev, isOnline, lastSeen }
-          : prev,
-      );
-    });
-
-    // PRIVATE MESSAGE
-    socket.on("newMessage", (message) => {
-      const activeUser = selectedUserRef.current;
-
-      setMessages((prev) => {
-        if (
-          activeUser &&
-          (getId(message.senderId) === activeUser._id ||
-            getId(message.receiverId) === activeUser._id)
-        ) {
-          return [...prev, message];
-        }
-        return prev;
+  //SEND MESSAGES
+  const handleSendMessage = async (e, file = null) => {
+    e.preventDefault();
+    if (!newMessage.trim() && !file) return;
+    if (!selectedUser) return;
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("receiverId", selectedUser._id);
+      if (newMessage.trim()) formData.append("message", newMessage);
+      if (file) formData.append("file", file);
+      const response = await fetch(`${API_BASE_URL}/send-message`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
-    });
-
-    // GROUP MESSAGE
-    socket.on("receiveGroupMessage", (message) => {
-      const activeGroup = selectedGroupRef.current;
-
-      setMessages((prev) => {
-        if (activeGroup && getId(message.groupId) === activeGroup._id) {
-          return [...prev, message];
-        }
-        return prev;
-      });
-    });
-
-    // PRIVATE DELETE
-    socket.on("messageDeleted", (updatedMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg._id === updatedMessage._id ? updatedMessage : msg,
-        ),
-      );
-    });
-
-    // PRIVATE UPDATE
-    socket.on("messageUpdated", (updatedMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg._id === updatedMessage._id ? updatedMessage : msg,
-        ),
-      );
-    });
-
-    // GROUP DELETE
-    socket.on("groupMessageDeleted", (updatedMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg._id === updatedMessage._id ? updatedMessage : msg,
-        ),
-      );
-    });
-
-    // GROUP UPDATE
-    socket.on("groupMessageUpdated", (updatedMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg._id === updatedMessage._id ? updatedMessage : msg,
-        ),
-      );
-    });
-
-    socket.on("disconnect", () => {
-      console.log("Socket Disconnected");
-    });
-
-    return () => {
-      socket.disconnect();
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (!users.length && !groups.length) return;
-
-    // USER ROUTE
-    if (username) {
-      const matchedUser = users.find((user) => {
-        const userPath = `${user.firstName}-${user.lastName}`
-          .toLowerCase()
-          .replace(/\s+/g, "-");
-
-        return userPath === username;
-      });
-
-      if (matchedUser && selectedUser?._id !== matchedUser._id) {
-        setTimeout(() => {
-          handleSelectUser(matchedUser);
-        }, 0);
+      const data = await response.json();
+      if (response.ok) {
+        const sentMessage = data.newMessage || data.data?.newMessage;
+        if (sentMessage) setMessages((prev) => [...prev, sentMessage]);
+        setNewMessage("");
       }
+    } catch (error) {
+      console.error("Send Message Error:", error);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    // GROUP ROUTE
-    if (routeGroupName) {
-      const matchedGroup = groups.find((group) => {
-        const groupPath = group.groupName.toLowerCase().replace(/\s+/g, "-");
-
-        return groupPath === routeGroupName;
+  const handleSendGroupFile = async (file) => {
+    if (!file || !selectedGroup) return;
+    try {
+      const formData = new FormData();
+      formData.append("groupId", selectedGroup._id);
+      formData.append("file", file);
+      if (newMessage.trim()) formData.append("message", newMessage);
+      const response = await fetch(`${API_BASE_URL}/group/send-file`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
       });
-
-      if (matchedGroup && selectedGroup?._id !== matchedGroup._id) {
-        setTimeout(() => {
-          handleSelectGroup(matchedGroup);
-        }, 0);
-      }
+      if (response.ok) setNewMessage("");
+    } catch (error) {
+      console.error("Send Group File Error:", error);
     }
-  }, [username, routeGroupName, users, groups]);
+  };
 
-  // SEND PRIVATE MESSAGE
-  // SEND MESSAGE (text + optional file, same as WhatsApp)
-const handleSendMessage = async (e, file = null) => {
-  e.preventDefault();
-
-  // must have text or file
-  if (!newMessage.trim() && !file) return;
-  if (!selectedUser) return;
-
-  setLoading(true);
-
-  try {
-    const formData = new FormData();
-    formData.append("receiverId", selectedUser._id);
-    if (newMessage.trim()) formData.append("message", newMessage);
-    if (file) formData.append("file", file);
-
-    const response = await fetch(`${API_BASE_URL}/send-message`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        // NO Content-Type — browser sets it automatically for FormData
-      },
-      body: formData,
-    });
-
-    const data = await response.json();
-      console.log("Send Message Response:", data);
-    if (response.ok) {
-      const sentMessage = data.newMessage || data.data?.newMessage;
-      if (sentMessage) {
-        setMessages((prev) => [...prev, sentMessage]);
-      }
-      setNewMessage("");
-    }
-  } catch (error) {
-    console.error("Send Message Error:", error);
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-  // SEND GROUP MESSAGE
   const handleSendGroupMessage = (e, file = null) => {
-  e.preventDefault();
-
-  if (!newMessage.trim() && !file) return;
-  if (!selectedGroup) return;
-
-  // FILE — use HTTP
-  if (file) {
-    handleSendGroupFile(file);
-    return;
-  }
-
-  // TEXT ONLY — use socket
-  if (!socketRef.current) return;
-  socketRef.current.emit("sendGroupMessage", {
-    groupId: selectedGroup._id,
-    message: newMessage,
-  });
-
-  setNewMessage("");
-};
-
-// ADD THIS NEW FUNCTION RIGHT AFTER
-const handleSendGroupFile = async (file) => {
-  if (!file || !selectedGroup) return;
-
-  try {
-    const formData = new FormData();
-    formData.append("groupId", selectedGroup._id);
-    formData.append("file", file);
-    if (newMessage.trim()) formData.append("message", newMessage);
-
-    const response = await fetch(`${API_BASE_URL}/group/send-file`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      body: formData,
-    });
-
-    const data = await response.json();
-    console.log("Group File Response:", data);
-
-    if (response.ok) {
-      setNewMessage("");
-    }
-  } catch (error) {
-    console.error("Send Group File Error:", error);
-  }
-};
+    e.preventDefault();
+    if (!newMessage.trim() && !file) return;
+    if (!selectedGroup) return;
+    if (file) { handleSendGroupFile(file); return; }
+    if (!socketRef.current) return;
+    emitGroupMessage(selectedGroup._id, newMessage);
+    setNewMessage("");
+  };
 
 
-  
 
-  // const handleDeleteMessage = async (messageId) => {
-  //   try {
-  //     const endpoint = selectedGroup
-  //     ? `${API_BASE_URL}/group/message/${messageId}`
-  //     : `${API_BASE_URL}/message/${messageId}`;
 
-  //     const response = await fetch(endpoint, {
-  //       method: "DELETE",
-  //       headers: {
-  //         Authorization: `Bearer ${token}`,
-  //       },
-  //     });
 
-  //     const data = await response.json();
 
-  //     if (response.ok) {
-  //       setMessages((prev) =>
-  //         prev.map((msg) =>
-  //           msg._id === messageId ? data.deletedMessage : msg,
-  //         ),
-  //       );
-  //     }
-  //   } catch (error) {
-  //     console.error("Delete Message Error:", error);
-  //   }
-  // };
+
+
+  //DELETE / UPDATE 
   const handleDeleteMessage = async (messageId) => {
     try {
       const endpoint = selectedGroup
         ? `${API_BASE_URL}/group/message/${messageId}`
         : `${API_BASE_URL}/message/${messageId}`;
-
       const response = await fetch(endpoint, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        console.error("Delete Message Error:", data);
-        return;
-      }
-
+      if (!response.ok) return;
       const deletedMessage =
-        data.deletedMessage ||
-        data.data?.deletedMessage ||
-        data.message ||
-        data.data?.message;
-
-      setMessages((prev) =>
-        prev.map((msg) => (msg._id === messageId ? deletedMessage : msg)),
-      );
-
-      if (socketRef.current) {
-        socketRef.current.emit(
-          selectedGroup ? "deleteGroupMessage" : "deletePrivateMessage",
-          selectedGroup
-            ? { groupId: selectedGroup._id, messageId }
-            : { receiverId: selectedUser._id, messageId },
-        );
-      }
+        data.deletedMessage || data.data?.deletedMessage || data.message || data.data?.message;
+      setMessages((prev) => prev.map((msg) => (msg._id === messageId ? deletedMessage : msg)));
+      if (socketRef.current) emitDeleteMessage({ messageId, selectedUser, selectedGroup });
     } catch (error) {
       console.error("Delete Message Error:", error);
     }
@@ -580,65 +534,31 @@ const handleSendGroupFile = async (file) => {
 
   const handleUpdateMessage = async (messageId) => {
     if (!editedText.trim()) return;
-
     try {
       const endpoint = selectedGroup
         ? `${API_BASE_URL}/group/message/${messageId}`
         : `${API_BASE_URL}/message/${messageId}`;
-
       const response = await fetch(endpoint, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          message: editedText,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ message: editedText }),
       });
-
       const data = await response.json();
-
-      if (!response.ok) {
-        console.error("Update Message Error:", data);
-        return;
-      }
-
+      if (!response.ok) return;
       const updatedMessage =
-        data.updatedMessage ||
-        data.data?.updatedMessage ||
-        data.message ||
-        data.data?.message;
-
+        data.updatedMessage || data.data?.updatedMessage || data.message || data.data?.message;
       if (updatedMessage) {
-        setMessages((prev) =>
-          prev.map((msg) => (msg._id === messageId ? updatedMessage : msg)),
-        );
+        setMessages((prev) => prev.map((msg) => (msg._id === messageId ? updatedMessage : msg)));
       }
-
       setEditingMessageId(null);
       setEditedText("");
-
-      if (socketRef.current) {
-        socketRef.current.emit(
-          selectedGroup ? "updateGroupMessage" : "updatePrivateMessage",
-          selectedGroup
-            ? {
-                groupId: selectedGroup._id,
-                messageId,
-                newMessage: editedText,
-              }
-            : {
-                receiverId: selectedUser._id,
-                messageId,
-                newMessage: editedText,
-              },
-        );
-      }
+      if (socketRef.current) emitUpdateMessage({ messageId, newMessage: editedText, selectedUser, selectedGroup });
     } catch (error) {
       console.error("Update Message Error:", error);
     }
   };
+
+  
 
   return (
     <>
@@ -656,8 +576,10 @@ const handleSendGroupFile = async (file) => {
         selectedMembers={selectedMembers}
         setSelectedMembers={setSelectedMembers}
         createGroup={createGroup}
+        handleUpload={handleUpload}
+        currentUser={currentUser}
+        handleGroupImageUpload={handleGroupImageUpload}
       />
-
       <ChatWindow
         selectedUser={selectedUser}
         selectedGroup={selectedGroup}
@@ -676,6 +598,14 @@ const handleSendGroupFile = async (file) => {
         setEditedText={setEditedText}
         handleDeleteMessage={handleDeleteMessage}
         handleUpdateMessage={handleUpdateMessage}
+        showMembers={showMembers}
+        setShowMembers={setShowMembers}
+        showAddUser={showAddUser}
+        setShowAddUser={setShowAddUser}
+        removeMember={removeMember}
+        addMember={addMember}
+        makeAdmin={makeAdmin}
+        handleGroupImageUpload={handleGroupImageUpload}
       />
     </>
   );
