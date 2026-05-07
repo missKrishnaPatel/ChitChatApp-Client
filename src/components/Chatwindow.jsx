@@ -1,3 +1,7 @@
+const REACT_APP_BASE_URL = import.meta.env.VITE_BASE_URL;
+
+
+
 const statusLabel = (isOnline, lastSeen) => {
   if (isOnline) return "Online";
   if (!lastSeen) return "Offline";
@@ -44,54 +48,88 @@ const ChatWindow = ({
 
           <div className="bg-white p-4 border-b">
             <div className="flex items-center gap-3">
-              {selectedGroup && (
-                <div className="flex items-center gap-3 p-4 ">
-                  {/* Clickable group avatar */}
-                  <label className="relative cursor-pointer group">
-                    {selectedGroup.groupImage ? (
-                      <img
-                        src={selectedGroup.groupImage}
-                        alt="group"
-                        className="w-12 h-12 rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-lg">
-                        {selectedGroup.groupName?.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <div
-                      className="absolute inset-0 bg-black bg-opacity-40 rounded-full 
-                  flex items-center justify-center opacity-0 
-                  group-hover:opacity-100 transition-opacity rounded-full"
-                    >
-                      <span className="text-white text-xs font-medium">
-                        Edit
-                      </span>
-                    </div>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file)
-                          handleGroupImageUpload(file, selectedGroup._id);
-                        e.target.value = "";
-                      }}
-                    />
-                  </label>
+  {/* ONE TO ONE USER HEADER */}
+  {selectedUser && (
+    <div className="flex items-center gap-3 p-4">
+      {selectedUser.profilePicture ? (
+        <img
+          src={selectedUser.profilePicture}
+          alt="user"
+          className="w-12 h-12 rounded-full object-cover"
+        />
+      ) : (
+        <div className="w-12 h-12 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold text-lg">
+          {selectedUser.firstName?.charAt(0).toUpperCase()}
+        </div>
+      )}
 
-                  <div>
-                    <div className="font-semibold text-lg">
-                      {selectedGroup.groupName}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {selectedGroup.members?.length} members
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+      <div>
+        <div className="font-semibold text-lg">
+          {selectedUser.firstName} {selectedUser.lastName}
+        </div>
+
+        {/* <div className="text-xs text-gray-500">
+          {selectedUser.isOnline ? "Online" : "Offline"}
+        </div> */}
+      </div>
+    </div>
+  )}
+
+  {/* GROUP HEADER */}
+  {selectedGroup && (
+    <div className="flex items-center gap-3 p-4">
+      {/* Clickable group avatar */}
+      <label className="relative cursor-pointer group">
+        {selectedGroup.groupImage ? (
+          <img
+            src={selectedGroup.groupImage}
+            alt="group"
+            className="w-12 h-12 rounded-full object-cover"
+          />
+        ) : (
+          <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center text-white font-bold text-lg">
+            {selectedGroup.groupName?.charAt(0).toUpperCase()}
+          </div>
+        )}
+
+        <div
+          className="absolute inset-0 bg-black bg-opacity-40 rounded-full 
+          flex items-center justify-center opacity-0 
+          group-hover:opacity-100 transition-opacity"
+        >
+          <span className="text-white text-xs font-medium">
+            Edit
+          </span>
+        </div>
+
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+
+            if (file) {
+              handleGroupImageUpload(file, selectedGroup._id);
+            }
+
+            e.target.value = "";
+          }}
+        />
+      </label>
+
+      <div>
+        <div className="font-semibold text-lg">
+          {selectedGroup.groupName}
+        </div>
+
+        <div className="text-xs text-gray-500">
+          {selectedGroup.members?.length} members
+        </div>
+      </div>
+    </div>
+  )}
+</div>
 
             {/* PRIVATE CHAT — online status */}
             {selectedUser && (
@@ -299,12 +337,12 @@ const ChatWindow = ({
                             <div className="flex flex-col gap-1">
                               {msg.fileType?.startsWith("image/") ? (
                                 <img
-                                  src={`http://localhost:3000${msg.fileUrl}`}
+                                  src={`${REACT_APP_BASE_URL}${msg.fileUrl}`}
                                   alt="attachment"
                                   className="max-w-xs rounded-lg cursor-pointer"
                                   onClick={() =>
                                     window.open(
-                                      `http://localhost:3000${msg.fileUrl}`,
+                                      `${REACT_APP_BASE_URL}${msg.fileUrl}`,
                                       "_blank",
                                     )
                                   }
@@ -312,13 +350,13 @@ const ChatWindow = ({
                               ) : msg.fileType?.startsWith("video/") ? (
                                 <video controls className="max-w-xs rounded-lg">
                                   <source
-                                    src={`http://localhost:3000${msg.fileUrl}`}
+                                    src={`${REACT_APP_BASE_URL}${msg.fileUrl}`}
                                     type={msg.fileType}
                                   />
                                 </video>
                               ) : (
                                 <a
-                                  href={`http://localhost:3000${msg.fileUrl}`}
+                                  href={`${REACT_APP_BASE_URL}${msg.fileUrl}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="flex items-center gap-2 px-3 py-2 rounded-lg border border-opacity-30 border-white bg-black bg-opacity-10"
