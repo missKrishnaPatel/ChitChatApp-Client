@@ -25,7 +25,7 @@ const Login = () => {
   setMessage("");
 
   try {
-    const response = await fetch("http://localhost:3000/api/v1/login", {
+    const response = await fetch("https://chitchatapp-backend-5.onrender.com/api/v1/login", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
